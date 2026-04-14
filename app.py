@@ -11,7 +11,7 @@ st.set_page_config(
     page_title="Everyday DelightZ",
     page_icon="🧁",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ── Brand CSS ────────────────────────────────────────────────────────
@@ -242,6 +242,88 @@ st.markdown("""
   /* ── Reduce motion ───────────────────────────────────────────── */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+
+  /* ── Mobile ──────────────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    /* Reduce main block padding so content uses full width */
+    .block-container {
+      padding-left: 12px !important;
+      padding-right: 12px !important;
+      padding-top: 16px !important;
+      max-width: 100% !important;
+    }
+
+    /* Section headers — smaller on mobile */
+    .section-header {
+      font-size: 18px !important;
+      padding-left: 10px !important;
+      margin-bottom: 2px !important;
+    }
+    .section-sub {
+      font-size: 12px !important;
+      margin-bottom: 16px !important;
+    }
+
+    /* Metric cards — tighter padding, smaller text */
+    .metric-card {
+      padding: 14px 16px !important;
+      margin-bottom: 8px !important;
+    }
+    .metric-value { font-size: 22px !important; }
+    .metric-label { font-size: 11px !important; }
+    .metric-sub   { font-size: 11px !important; }
+
+    /* Buttons — bigger touch target */
+    .stButton > button {
+      padding: 14px 20px !important;
+      font-size: 15px !important;
+      min-height: 48px !important;
+    }
+
+    /* Form inputs — bigger touch targets */
+    .stTextInput input,
+    .stNumberInput input,
+    .stDateInput input {
+      font-size: 16px !important;  /* prevents iOS zoom on focus */
+      padding: 12px 14px !important;
+      min-height: 48px !important;
+    }
+    .stSelectbox > div > div {
+      font-size: 16px !important;
+      min-height: 48px !important;
+    }
+
+    /* Tables — horizontal scroll instead of overflow */
+    div[data-testid="stDataFrame"] {
+      overflow-x: auto !important;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Tabs — smaller, scrollable on mobile */
+    .stTabs [data-baseweb="tab-list"] {
+      overflow-x: auto !important;
+      flex-wrap: nowrap !important;
+      -webkit-overflow-scrolling: touch;
+      padding: 4px !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+      font-size: 12px !important;
+      padding: 8px 12px !important;
+      white-space: nowrap !important;
+    }
+
+    /* Expanders */
+    .streamlit-expanderHeader {
+      font-size: 13px !important;
+      padding: 12px 14px !important;
+    }
+
+    /* Dividers — less vertical space */
+    hr { margin: 16px 0 !important; }
+
+    /* Columns — ensure they stack cleanly */
+    div[data-testid="column"] { padding: 0 4px !important; }
   }
 </style>
 """, unsafe_allow_html=True)

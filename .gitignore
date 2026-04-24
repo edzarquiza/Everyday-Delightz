@@ -21,5 +21,5 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data — do NOT ignore the Excel file so it uploads as starter data
-# everyday_delightz_data.xlsx
+# Data — excluded so deploys don't overwrite live data; app creates it on first run
+everyday_delightz_data.xlsx

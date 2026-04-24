@@ -329,7 +329,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Data manager ─────────────────────────────────────────────────────
-dm = DataManager()
+@st.cache_resource
+def get_data_manager():
+    return DataManager()
+
+dm = get_data_manager()
 
 # ── Sidebar ──────────────────────────────────────────────────────────
 with st.sidebar:

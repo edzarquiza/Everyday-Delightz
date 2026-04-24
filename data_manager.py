@@ -10,14 +10,21 @@ from datetime import date
 
 DB_FILE = "everyday_delightz_data.xlsx"
 
+# Default values injected when migrating existing sheets that are missing a column
+SHEET_DEFAULTS = {
+    "pack_sizes": "1,6,12",
+}
+
 SHEETS = {
     "ingredients": {
         "columns": ["id", "name", "unit", "cost_per_unit", "stock", "min_stock", "updated_at"],
         "dtypes": {"id": int, "cost_per_unit": float, "stock": float, "min_stock": float}
     },
     "recipes": {
-        "columns": ["id", "name", "portion_size", "waste_pct", "default_price", "target_margin_pct", "dough_weight"],
-        "dtypes": {"id": int, "portion_size": float, "waste_pct": float, "default_price": float, "target_margin_pct": float, "dough_weight": float}
+        "columns": ["id", "name", "portion_size", "waste_pct", "default_price",
+                    "target_margin_pct", "dough_weight", "pack_sizes"],
+        "dtypes": {"id": int, "portion_size": float, "waste_pct": float,
+                   "default_price": float, "target_margin_pct": float, "dough_weight": float}
     },
     "recipe_items": {
         "columns": ["id", "recipe_id", "ingredient_id", "qty"],
@@ -26,6 +33,14 @@ SHEETS = {
     "sales": {
         "columns": ["id", "recipe_id", "qty", "price_per_pc", "date", "pack_size"],
         "dtypes": {"id": int, "recipe_id": int, "qty": int, "price_per_pc": float, "pack_size": int}
+    },
+    "expenses": {
+        "columns": ["id", "description", "category", "amount", "date"],
+        "dtypes": {"id": int, "amount": float}
+    },
+    "settings": {
+        "columns": ["key", "value"],
+        "dtypes": {}
     },
 }
 
@@ -43,16 +58,14 @@ SAMPLE_DATA = {
     ], columns=SHEETS["ingredients"]["columns"]),
 
     "recipes": pd.DataFrame([
-        [1, "Choco Chip Cookies", 40, 5, 35, 60, 927],
-        [2, "Brownies",           60, 3, 45, 55, 780],
+        [1, "Choco Chip Cookies", 40, 5, 35, 60, 927, "1,6,12"],
+        [2, "Brownies",           60, 3, 45, 55, 780, "1,6,12"],
     ], columns=SHEETS["recipes"]["columns"]),
 
     "recipe_items": pd.DataFrame([
-        # Choco Chip Cookies
         [1,  1, 1, 280], [2,  1, 2, 200], [3,  1, 3, 227],
         [4,  1, 4, 2],   [5,  1, 5, 5],   [6,  1, 7, 200],
         [7,  1, 8, 10],  [8,  1, 9, 3],
-        # Brownies
         [9,  2, 1, 150], [10, 2, 2, 300], [11, 2, 3, 200],
         [12, 2, 4, 3],   [13, 2, 6, 120], [14, 2, 8, 5],
         [15, 2, 9, 2],
@@ -62,6 +75,12 @@ SAMPLE_DATA = {
         [1, 1, 24, 35, str(date.today()), 6],
         [2, 2, 12, 45, str(date.today()), 12],
     ], columns=SHEETS["sales"]["columns"]),
+
+    "expenses": pd.DataFrame(columns=SHEETS["expenses"]["columns"]),
+
+    "settings": pd.DataFrame([
+        ["monthly_goal", "0"],
+    ], columns=SHEETS["settings"]["columns"]),
 }
 
 
@@ -72,19 +91,35 @@ class DataManager:
 
     # ── Internal helpers ────────────────────────────────────────────
     def _ensure_db(self):
-        """Create the Excel file with sample data if it doesn't exist."""
+        """Create the Excel file with sample data if it doesn't exist, or migrate existing."""
         if not self.db_path.exists():
             with pd.ExcelWriter(self.db_path, engine="openpyxl") as writer:
                 for sheet, df in SAMPLE_DATA.items():
                     df.to_excel(writer, sheet_name=sheet, index=False)
         else:
-            # Make sure all sheets exist (in case new sheets were added)
             try:
-                existing = pd.ExcelFile(self.db_path).sheet_names
-                with pd.ExcelWriter(self.db_path, engine="openpyxl", mode="a", if_sheet_exists="overlay") as writer:
-                    for sheet in SHEETS:
-                        if sheet not in existing:
-                            SAMPLE_DATA[sheet].to_excel(writer, sheet_name=sheet, index=False)
+                xf = pd.ExcelFile(self.db_path, engine="openpyxl")
+                existing_sheets = xf.sheet_names
+                all_sheets = {s: pd.read_excel(self.db_path, sheet_name=s, engine="openpyxl")
+                              for s in existing_sheets}
+                changed = False
+
+                for sheet, spec in SHEETS.items():
+                    if sheet not in all_sheets:
+                        all_sheets[sheet] = SAMPLE_DATA[sheet].copy()
+                        changed = True
+                    else:
+                        df = all_sheets[sheet]
+                        for col in spec["columns"]:
+                            if col not in df.columns:
+                                df[col] = SHEET_DEFAULTS.get(col, None)
+                                changed = True
+                        all_sheets[sheet] = df
+
+                if changed:
+                    with pd.ExcelWriter(self.db_path, engine="openpyxl") as writer:
+                        for s, df in all_sheets.items():
+                            df.to_excel(writer, sheet_name=s, index=False)
             except Exception:
                 pass
 
@@ -100,7 +135,6 @@ class DataManager:
     def _write_sheet(self, sheet: str, df: pd.DataFrame):
         """Write a single sheet, preserving all other sheets."""
         try:
-            # Read all current sheets
             all_sheets = {}
             try:
                 xf = pd.ExcelFile(self.db_path, engine="openpyxl")
@@ -108,9 +142,7 @@ class DataManager:
                     all_sheets[s] = pd.read_excel(self.db_path, sheet_name=s, engine="openpyxl")
             except Exception:
                 pass
-
             all_sheets[sheet] = df
-
             with pd.ExcelWriter(self.db_path, engine="openpyxl") as writer:
                 for s, sdf in all_sheets.items():
                     sdf.to_excel(writer, sheet_name=s, index=False)
@@ -134,11 +166,9 @@ class DataManager:
     def add_ingredient(self, name, unit, cost_per_unit, stock, min_stock):
         df = self.get_ingredients()
         new_row = {
-            "id": self._next_id(df),
-            "name": name, "unit": unit,
-            "cost_per_unit": float(cost_per_unit),
-            "stock": float(stock), "min_stock": float(min_stock),
-            "updated_at": str(date.today()),
+            "id": self._next_id(df), "name": name, "unit": unit,
+            "cost_per_unit": float(cost_per_unit), "stock": float(stock),
+            "min_stock": float(min_stock), "updated_at": str(date.today()),
         }
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         self._write_sheet("ingredients", df)
@@ -164,22 +194,26 @@ class DataManager:
             for col, dtype in SHEETS["recipes"]["dtypes"].items():
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(dtype)
+            if "pack_sizes" not in df.columns:
+                df["pack_sizes"] = "1,6,12"
+            else:
+                df["pack_sizes"] = df["pack_sizes"].fillna("1,6,12").astype(str)
         return df
 
-    def add_recipe(self, name, portion_size, waste_pct, default_price, target_margin_pct, dough_weight, ingredients: list):
-        """ingredients: list of dicts {ingredient_id, qty}"""
+    def add_recipe(self, name, portion_size, waste_pct, default_price,
+                   target_margin_pct, dough_weight, ingredients: list,
+                   pack_sizes: str = "1,6,12"):
         df = self.get_recipes()
         new_id = self._next_id(df)
         new_row = {
             "id": new_id, "name": name,
             "portion_size": float(portion_size), "waste_pct": float(waste_pct),
             "default_price": float(default_price), "target_margin_pct": float(target_margin_pct),
-            "dough_weight": float(dough_weight),
+            "dough_weight": float(dough_weight), "pack_sizes": str(pack_sizes),
         }
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         self._write_sheet("recipes", df)
 
-        # Write recipe items
         ri_df = self.get_recipe_items()
         new_rows = []
         for item in ingredients:
@@ -193,17 +227,22 @@ class DataManager:
             ri_df = pd.concat([ri_df, pd.DataFrame(new_rows)], ignore_index=True)
             self._write_sheet("recipe_items", ri_df)
 
-    def update_recipe(self, recipe_id, name, portion_size, waste_pct, default_price, target_margin_pct, dough_weight, ingredients: list):
-        """Update recipe fields and replace all its ingredient items."""
+    def update_recipe(self, recipe_id, name, portion_size, waste_pct, default_price,
+                      target_margin_pct, dough_weight, ingredients: list,
+                      pack_sizes: str = None):
         df = self.get_recipes()
         idx = df[df["id"] == recipe_id].index
         if not idx.empty:
-            df.loc[idx[0], ["name", "portion_size", "waste_pct", "default_price", "target_margin_pct", "dough_weight"]] = [
-                name, float(portion_size), float(waste_pct), float(default_price), float(target_margin_pct), float(dough_weight)
-            ]
+            cols = ["name", "portion_size", "waste_pct", "default_price",
+                    "target_margin_pct", "dough_weight"]
+            vals = [name, float(portion_size), float(waste_pct),
+                    float(default_price), float(target_margin_pct), float(dough_weight)]
+            if pack_sizes is not None:
+                cols.append("pack_sizes")
+                vals.append(str(pack_sizes))
+            df.loc[idx[0], cols] = vals
         self._write_sheet("recipes", df)
 
-        # Replace recipe items
         ri_df = self.get_recipe_items()
         ri_df = ri_df[ri_df["recipe_id"] != recipe_id]
         new_rows = []
@@ -222,7 +261,6 @@ class DataManager:
         df = self.get_recipes()
         df = df[df["id"] != recipe_id]
         self._write_sheet("recipes", df)
-        # Also delete items
         ri_df = self.get_recipe_items()
         ri_df = ri_df[ri_df["recipe_id"] != recipe_id]
         self._write_sheet("recipe_items", ri_df)
@@ -252,12 +290,9 @@ class DataManager:
     def add_sale(self, recipe_id, qty, price_per_pc, sale_date, pack_size=1):
         df = self.get_sales()
         new_row = {
-            "id": self._next_id(df),
-            "recipe_id": int(recipe_id),
-            "qty": int(qty),
-            "price_per_pc": float(price_per_pc),
-            "date": str(sale_date),
-            "pack_size": int(pack_size),
+            "id": self._next_id(df), "recipe_id": int(recipe_id),
+            "qty": int(qty), "price_per_pc": float(price_per_pc),
+            "date": str(sale_date), "pack_size": int(pack_size),
         }
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         self._write_sheet("sales", df)
@@ -266,3 +301,44 @@ class DataManager:
         df = self.get_sales()
         df = df[df["id"] != sale_id]
         self._write_sheet("sales", df)
+
+    # ── EXPENSES ─────────────────────────────────────────────────────
+    def get_expenses(self) -> pd.DataFrame:
+        df = self._read("expenses")
+        if not df.empty:
+            for col, dtype in SHEETS["expenses"]["dtypes"].items():
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(dtype)
+        return df
+
+    def add_expense(self, description, category, amount, exp_date):
+        df = self.get_expenses()
+        new_row = {
+            "id": self._next_id(df), "description": description,
+            "category": category, "amount": float(amount), "date": str(exp_date),
+        }
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        self._write_sheet("expenses", df)
+
+    def delete_expense(self, exp_id):
+        df = self.get_expenses()
+        df = df[df["id"] != exp_id]
+        self._write_sheet("expenses", df)
+
+    # ── SETTINGS ─────────────────────────────────────────────────────
+    def get_setting(self, key: str, default=None):
+        df = self._read("settings")
+        if df.empty or "key" not in df.columns:
+            return default
+        row = df[df["key"] == key]
+        return row.iloc[0]["value"] if not row.empty else default
+
+    def set_setting(self, key: str, value: str):
+        df = self._read("settings")
+        if df.empty or "key" not in df.columns:
+            df = pd.DataFrame(columns=SHEETS["settings"]["columns"])
+        if key in df["key"].values:
+            df.loc[df["key"] == key, "value"] = str(value)
+        else:
+            df = pd.concat([df, pd.DataFrame([{"key": key, "value": str(value)}])], ignore_index=True)
+        self._write_sheet("settings", df)

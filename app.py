@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from pathlib import Path
 import math
-from datetime import date
+from datetime import date, timedelta
 import plotly.graph_objects as go
 from data_manager import DataManager
 
@@ -348,6 +348,8 @@ with st.sidebar:
         "🧾 Recipe Templates": "recipes",
         "⚙️ Yield & Cost Calc": "calculator",
         "📈 Sales Tracker": "sales",
+        "💸 Expenses": "expenses",
+        "🗓️ Batch Planner": "planner",
     }
 
     if "page" not in st.session_state:
@@ -429,47 +431,114 @@ if page == "dashboard":
     st.markdown('<div class="section-header">📊 Profit Dashboard</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">Your baking business at a glance</div>', unsafe_allow_html=True)
 
-    sales = dm.get_sales()
-    recipes = dm.get_recipes()
-    ings = dm.get_ingredients()
+    sales_all    = dm.get_sales()
+    recipes      = dm.get_recipes()
+    ings         = dm.get_ingredients()
+    expenses_all = dm.get_expenses()
+    today_dt     = date.today()
 
-    # ── Top KPIs ───────────────────────────────────────────────────
+    # ── Period filter ─────────────────────────────────────────────
+    period = st.radio(
+        "Period", ["This Week", "This Month", "This Year", "All Time"],
+        horizontal=True, index=1, label_visibility="collapsed"
+    )
+
+    def _filter_period(df, date_col="date"):
+        if df.empty or period == "All Time":
+            return df.copy()
+        d = df.copy()
+        d[date_col] = pd.to_datetime(d[date_col]).dt.date
+        if period == "This Week":
+            start = today_dt - timedelta(days=today_dt.weekday())
+        elif period == "This Month":
+            start = today_dt.replace(day=1)
+        else:
+            start = today_dt.replace(month=1, day=1)
+        return d[d[date_col] >= start]
+
+    sales    = _filter_period(sales_all)
+    expenses = _filter_period(expenses_all)
+    total_overhead = float(expenses["amount"].sum()) if not expenses.empty else 0.0
+
+    # ── Compute KPIs ──────────────────────────────────────────────
     total_revenue = 0.0
-    total_cost = 0.0
-    _cost_cache = {}  # avoid repeated Excel reads for same recipe
-    _all_items  = dm.get_recipe_items()
+    total_cost    = 0.0
+    _cost_cache   = {}
+    _all_items    = dm.get_recipe_items()
     if not sales.empty:
         for _, s in sales.iterrows():
             r = recipes[recipes["id"] == s["recipe_id"]]
             if r.empty:
                 continue
-            r = r.iloc[0]
+            r   = r.iloc[0]
             rid = r["id"]
             if rid not in _cost_cache:
-                _recipe_items = _all_items[_all_items["recipe_id"] == rid]
-                _cost_cache[rid] = calc_recipe_cost(rid, _items_cache=_recipe_items, _ings_cache=ings)
-            batch_cost = _cost_cache[rid]
-            pieces = calc_yield(float(r.get("dough_weight", 0) or 0), float(r["portion_size"]), float(r["waste_pct"]))
-            cost_per_pc = batch_cost / pieces if pieces > 0 else 0
+                _ri = _all_items[_all_items["recipe_id"] == rid]
+                _cost_cache[rid] = calc_recipe_cost(rid, _items_cache=_ri, _ings_cache=ings)
+            pieces      = calc_yield(float(r.get("dough_weight", 0) or 0), float(r["portion_size"]), float(r["waste_pct"]))
+            cost_per_pc = _cost_cache[rid] / pieces if pieces > 0 else 0
             total_revenue += float(s["qty"]) * float(s["price_per_pc"])
-            total_cost += cost_per_pc * float(s["qty"])
+            total_cost    += cost_per_pc * float(s["qty"])
 
-    total_profit = total_revenue - total_cost
-    overall_margin = (total_profit / total_revenue * 100) if total_revenue > 0 else 0
-    low_count = len(ings[ings["stock"] <= ings["min_stock"]]) if not ings.empty else 0
+    net_profit     = total_revenue - total_cost - total_overhead
+    overall_margin = (net_profit / total_revenue * 100) if total_revenue > 0 else 0
+    low_count      = len(ings[ings["stock"] <= ings["min_stock"]]) if not ings.empty else 0
 
+    # ── KPI cards ─────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(f'<div class="metric-card"><div class="metric-label">Total Revenue</div><div class="metric-value gold">{peso(total_revenue)}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Revenue</div><div class="metric-value gold">{peso(total_revenue)}</div><div class="metric-sub">{period}</div></div>', unsafe_allow_html=True)
     with c2:
-        profit_color = "green" if total_profit >= 0 else "red"
-        st.markdown(f'<div class="metric-card"><div class="metric-label">Total Profit</div><div class="metric-value {profit_color}">{peso(total_profit)}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Overhead</div><div class="metric-value white">{peso(total_overhead)}</div><div class="metric-sub">Expenses · {period}</div></div>', unsafe_allow_html=True)
     with c3:
-        col = "green" if overall_margin >= 50 else ("gold" if overall_margin >= 30 else "red")
-        st.markdown(f'<div class="metric-card"><div class="metric-label">Avg Margin</div><div class="metric-value {col}">{overall_margin:.1f}%</div></div>', unsafe_allow_html=True)
+        pc = "green" if net_profit >= 0 else "red"
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Net Profit</div><div class="metric-value {pc}">{peso(net_profit)}</div><div class="metric-sub">After overhead</div></div>', unsafe_allow_html=True)
     with c4:
-        col = "red" if low_count > 0 else "green"
-        st.markdown(f'<div class="metric-card"><div class="metric-label">Low Stock Items</div><div class="metric-value {col}">{low_count}</div><div class="metric-sub">{"Needs restocking" if low_count > 0 else "All stocked"}</div></div>', unsafe_allow_html=True)
+        mc = "green" if overall_margin >= 50 else ("gold" if overall_margin >= 30 else "red")
+        lbl = f"⚠️ {low_count} low stock" if low_count > 0 else "✅ Stock OK"
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Net Margin</div><div class="metric-value {mc}">{overall_margin:.1f}%</div><div class="metric-sub">{lbl}</div></div>', unsafe_allow_html=True)
+
+    # ── Monthly goal progress bar ─────────────────────────────────
+    monthly_goal = float(dm.get_setting("monthly_goal") or 0)
+    this_month_rev = 0.0
+    if not sales_all.empty:
+        _sm = sales_all.copy()
+        _sm["_d"] = pd.to_datetime(_sm["date"]).dt.date
+        _sm = _sm[_sm["_d"] >= today_dt.replace(day=1)]
+        if not _sm.empty:
+            this_month_rev = float((_sm["qty"] * _sm["price_per_pc"]).sum())
+
+    st.markdown("---")
+    g_col, btn_col = st.columns([5, 1])
+    with g_col:
+        if monthly_goal > 0:
+            pct = min(this_month_rev / monthly_goal * 100, 100)
+            bar_color = "#3aad2e" if pct >= 100 else ("#204ce5" if pct >= 60 else "#e8a020")
+            st.markdown(f"""
+            <div style='background:#ffffff; border:1px solid #d0d8f0; border-radius:12px; padding:16px 20px; box-shadow:0 1px 4px rgba(32,76,229,0.06);'>
+              <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;'>
+                <span style='font-size:13px; font-weight:700; color:#112337;'>🎯 Monthly Revenue Goal</span>
+                <span style='font-size:13px; font-weight:800; color:{bar_color};'>{peso(this_month_rev)} / {peso(monthly_goal)} &nbsp;·&nbsp; {pct:.0f}%</span>
+              </div>
+              <div style='background:#eef2ff; border-radius:6px; height:10px; overflow:hidden;'>
+                <div style='background:{bar_color}; height:10px; border-radius:6px; width:{pct:.1f}%;'></div>
+              </div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#686e77; font-size:13px; padding:10px 0;">No monthly goal set — click <strong>Set Goal</strong> to track your monthly revenue progress.</div>', unsafe_allow_html=True)
+    with btn_col:
+        st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+        if st.button("🎯 Set Goal", use_container_width=True, key="btn_set_goal"):
+            st.session_state["show_goal_input"] = not st.session_state.get("show_goal_input", False)
+
+    if st.session_state.get("show_goal_input"):
+        with st.form("set_goal_form"):
+            new_goal = st.number_input("Monthly Revenue Goal (₱)", min_value=0.0, value=monthly_goal, step=100.0)
+            if st.form_submit_button("✅ Save Goal", use_container_width=True):
+                dm.set_setting("monthly_goal", str(new_goal))
+                st.session_state.pop("show_goal_input", None)
+                st.success("✅ Goal saved!")
+                st.rerun()
 
     st.markdown("---")
 
@@ -479,31 +548,24 @@ if page == "dashboard":
         perf_rows = []
         for _, r in recipes.iterrows():
             rid = r["id"]
-            _recipe_items = _all_items[_all_items["recipe_id"] == rid]
-            batch_cost = _cost_cache.get(rid) or calc_recipe_cost(rid, _items_cache=_recipe_items, _ings_cache=ings)
-            dw = r.get("dough_weight") or 0
-            pieces = calc_yield(float(dw), float(r["portion_size"]), float(r["waste_pct"]))
+            _ri = _all_items[_all_items["recipe_id"] == rid]
+            batch_cost  = _cost_cache.get(rid) or calc_recipe_cost(rid, _items_cache=_ri, _ings_cache=ings)
+            pieces      = calc_yield(float(r.get("dough_weight") or 0), float(r["portion_size"]), float(r["waste_pct"]))
             cost_per_pc = batch_cost / pieces if pieces > 0 else 0
-            sell_price = float(r["default_price"])
-            margin = ((sell_price - cost_per_pc) / sell_price * 100) if sell_price > 0 else 0
+            sell_price  = float(r["default_price"])
+            margin      = ((sell_price - cost_per_pc) / sell_price * 100) if sell_price > 0 else 0
 
             rel_sales = sales[sales["recipe_id"] == r["id"]] if not sales.empty else pd.DataFrame()
             total_qty = rel_sales["qty"].sum() if not rel_sales.empty else 0
-            rev = (rel_sales["qty"] * rel_sales["price_per_pc"]).sum() if not rel_sales.empty else 0
-            profit = (rel_sales["qty"] * (rel_sales["price_per_pc"] - cost_per_pc)).sum() if not rel_sales.empty else 0
+            rev       = (rel_sales["qty"] * rel_sales["price_per_pc"]).sum() if not rel_sales.empty else 0
+            profit    = (rel_sales["qty"] * (rel_sales["price_per_pc"] - cost_per_pc)).sum() if not rel_sales.empty else 0
 
             perf_rows.append({
-                "Product": r["name"],
-                "Cost/pc": peso(cost_per_pc),
-                "Sell Price": peso(sell_price),
-                "Margin %": f"{margin:.1f}%",
-                "Units Sold": int(total_qty),
-                "Revenue": peso(rev),
-                "Profit": peso(profit),
+                "Product": r["name"], "Cost/pc": peso(cost_per_pc),
+                "Sell Price": peso(sell_price), "Margin %": f"{margin:.1f}%",
+                "Units Sold": int(total_qty), "Revenue": peso(rev), "Profit": peso(profit),
             })
-
-        perf_df = pd.DataFrame(perf_rows)
-        st.dataframe(perf_df, use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(perf_rows), use_container_width=True, hide_index=True)
     else:
         st.info("No recipes yet. Add some in Recipe Templates.")
 
@@ -531,11 +593,9 @@ if page == "dashboard":
             margin=dict(l=10, r=10, t=24, b=10),
             showlegend=False,
         )
-
         st.markdown("---")
         st.markdown("#### 📈 Sales Trends")
         ch1, ch2 = st.columns(2)
-
         with ch1:
             st.markdown("**Daily Revenue (₱)**")
             daily = sales.copy()
@@ -543,15 +603,12 @@ if page == "dashboard":
             daily_grp = daily.groupby("date")["revenue"].sum().reset_index().sort_values("date")
             fig1 = go.Figure()
             fig1.add_trace(go.Scatter(
-                x=daily_grp["date"], y=daily_grp["revenue"],
-                mode="lines+markers",
-                line=dict(color="#204ce5", width=2),
-                marker=dict(color="#204ce5", size=6),
+                x=daily_grp["date"], y=daily_grp["revenue"], mode="lines+markers",
+                line=dict(color="#204ce5", width=2), marker=dict(color="#204ce5", size=6),
                 fill="tozeroy", fillcolor="rgba(32,76,229,0.10)",
             ))
             fig1.update_layout(**_chart_layout, height=230)
             st.plotly_chart(fig1, use_container_width=True)
-
         with ch2:
             st.markdown("**Revenue by Product (₱)**")
             prod_rev = []
@@ -562,13 +619,10 @@ if page == "dashboard":
                     prod_rev.append({"name": r["name"], "rev": round(rev, 2)})
             if prod_rev:
                 fig2 = go.Figure(go.Bar(
-                    x=[p["rev"] for p in prod_rev],
-                    y=[p["name"] for p in prod_rev],
-                    orientation="h",
-                    marker_color="#3aad2e",
+                    x=[p["rev"] for p in prod_rev], y=[p["name"] for p in prod_rev],
+                    orientation="h", marker_color="#3aad2e",
                     text=[f"₱{p['rev']:,.0f}" for p in prod_rev],
-                    textposition="auto",
-                    textfont=dict(color="#112337"),
+                    textposition="auto", textfont=dict(color="#112337"),
                 ))
                 fig2.update_layout(**_chart_layout, height=230)
                 st.plotly_chart(fig2, use_container_width=True)
@@ -578,7 +632,7 @@ if page == "dashboard":
         for _, r in recipes.iterrows():
             rid = r["id"]
             _ri = _all_items[_all_items["recipe_id"] == rid]
-            bc = _cost_cache.get(rid) or calc_recipe_cost(rid, _items_cache=_ri, _ings_cache=ings)
+            bc  = _cost_cache.get(rid) or calc_recipe_cost(rid, _items_cache=_ri, _ings_cache=ings)
             pcs = calc_yield(float(r.get("dough_weight") or 0), float(r["portion_size"]), float(r["waste_pct"]))
             cpc = bc / pcs if pcs > 0 else 0
             rel = sales[sales["recipe_id"] == rid]
@@ -586,15 +640,12 @@ if page == "dashboard":
                 profit = round((rel["qty"] * (rel["price_per_pc"] - cpc)).sum(), 2)
                 profit_rows.append({"name": r["name"], "profit": profit})
         if profit_rows:
-            colors = ["#3aad2e" if p["profit"] >= 0 else "#e05555" for p in profit_rows]
             fig3 = go.Figure(go.Bar(
-                x=[p["profit"] for p in profit_rows],
-                y=[p["name"] for p in profit_rows],
+                x=[p["profit"] for p in profit_rows], y=[p["name"] for p in profit_rows],
                 orientation="h",
-                marker_color=colors,
+                marker_color=["#3aad2e" if p["profit"] >= 0 else "#e05555" for p in profit_rows],
                 text=[f"₱{p['profit']:,.0f}" for p in profit_rows],
-                textposition="auto",
-                textfont=dict(color="#112337"),
+                textposition="auto", textfont=dict(color="#112337"),
             ))
             fig3.update_layout(**_chart_layout, height=max(180, len(profit_rows) * 60))
             st.plotly_chart(fig3, use_container_width=True)
@@ -739,6 +790,29 @@ elif page == "inventory":
         inv_display = inv_display.rename(columns={"name": "Ingredient", "unit": "Unit", "stock": "Current Stock", "min_stock": "Min Stock"})
         st.dataframe(inv_display[["Ingredient", "Unit", "Current Stock", "Min Stock", "Status"]], use_container_width=True, hide_index=True)
 
+        # ── Shopping list ──────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 🛒 Shopping List")
+        low_items = ings[ings["stock"] < ings["min_stock"]]
+        if low_items.empty:
+            st.markdown('<div class="alert-ok">✅ All ingredients are sufficiently stocked — nothing to buy right now.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="alert-low">⚠️ {len(low_items)} ingredient(s) need restocking.</div>', unsafe_allow_html=True)
+            for _, item in low_items.iterrows():
+                needed = item["min_stock"] - item["stock"]
+                st.markdown(
+                    f"<div style='background:#ffffff; border:1px solid #d0d8f0; border-radius:8px; "
+                    f"padding:10px 16px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;'>"
+                    f"<span style='font-weight:700; color:#112337;'>{item['name']}</span>"
+                    f"<span style='color:#686e77; font-size:13px;'>Have: <strong>{item['stock']:.0f} {item['unit']}</strong> &nbsp;·&nbsp; "
+                    f"Min: <strong>{item['min_stock']:.0f} {item['unit']}</strong></span>"
+                    f"<span style='background:#e0555512; color:#e05555; border:1px solid #e0555530; "
+                    f"border-radius:20px; font-size:12px; font-weight:700; padding:4px 12px;'>"
+                    f"Buy ≥ {needed:.0f} {item['unit']}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
 # ────────────────────────────────────────────────────────────────────
 # PAGE: RECIPES
 # ────────────────────────────────────────────────────────────────────
@@ -763,6 +837,8 @@ elif page == "recipes":
                 with c2:
                     default_price = st.number_input("Default Selling Price (₱/pc)", min_value=0.0, value=35.0)
                     target_margin = st.number_input("Target Profit Margin (%)", min_value=0.0, max_value=100.0, value=60.0)
+                    pack_sizes_input = st.text_input("Pack Sizes (comma-separated)", value="1,6,12",
+                        help="e.g. '1,5,10' → sell per piece, box of 5, or box of 10")
 
                 st.markdown("**Ingredients:**")
                 num_ings = st.number_input("Number of ingredients", min_value=1, max_value=20, value=3, step=1)
@@ -792,7 +868,7 @@ elif page == "recipes":
                             row = ings[ings["name"] == sn]
                             if not row.empty:
                                 recipe_ings.append({"ingredient_id": int(row.iloc[0]["id"]), "qty": sq})
-                        dm.add_recipe(r_name, portion, waste, default_price, target_margin, dw, recipe_ings)
+                        dm.add_recipe(r_name, portion, waste, default_price, target_margin, dw, recipe_ings, pack_sizes=pack_sizes_input)
                         st.success(f"✅ {r_name} saved!")
                         st.rerun()
 
@@ -838,7 +914,7 @@ elif page == "recipes":
                     if st.button(f"📋 Duplicate", key=f"dup_{r['id']}"):
                         items = dm.get_recipe_items(r["id"])
                         ing_list = [{"ingredient_id": int(i["ingredient_id"]), "qty": float(i["qty"])} for _, i in items.iterrows()]
-                        dm.add_recipe(r["name"] + " (Copy)", float(r["portion_size"]), float(r["waste_pct"]), float(r["default_price"]), float(r["target_margin_pct"]), float(r.get("dough_weight") or 0), ing_list)
+                        dm.add_recipe(r["name"] + " (Copy)", float(r["portion_size"]), float(r["waste_pct"]), float(r["default_price"]), float(r["target_margin_pct"]), float(r.get("dough_weight") or 0), ing_list, pack_sizes=str(r.get("pack_sizes") or "1,6,12"))
                         st.success("Duplicated!")
                         st.rerun()
                 with cx:
@@ -870,6 +946,8 @@ elif page == "recipes":
                         with ec2:
                             e_price = st.number_input("Default Selling Price (₱/pc)", min_value=0.0, value=float(r["default_price"]), key=f"epr_{r['id']}")
                             e_margin = st.number_input("Target Profit Margin (%)", min_value=0.0, max_value=100.0, value=float(r["target_margin_pct"]), key=f"em_{r['id']}")
+                            e_pack_sizes = st.text_input("Pack Sizes", value=str(r.get("pack_sizes") or "1,6,12"),
+                                help="e.g. '1,5,10' → per piece, box of 5, box of 10", key=f"eps_{r['id']}")
 
                         st.markdown("**Ingredients:**")
                         edit_selections = []
@@ -903,7 +981,7 @@ elif page == "recipes":
                                     if row.iloc[0]["unit"] == "g":
                                         e_dw += sq
                                     recipe_ings.append({"ingredient_id": int(row.iloc[0]["id"]), "qty": sq})
-                            dm.update_recipe(int(r["id"]), e_name, e_portion, e_waste, e_price, e_margin, e_dw, recipe_ings)
+                            dm.update_recipe(int(r["id"]), e_name, e_portion, e_waste, e_price, e_margin, e_dw, recipe_ings, pack_sizes=e_pack_sizes)
                             # Delete key so it reinitializes from saved item count on next rerun
                             if n_key in st.session_state:
                                 del st.session_state[n_key]
@@ -937,6 +1015,7 @@ elif page == "calculator":
             st.session_state.pop("calc_dough_w", None)
             st.session_state.pop("calc_portion", None)
             st.session_state.pop("calc_waste", None)
+            st.session_state.pop("calc_pack_sel", None)
 
         # Apply tier button overrides BEFORE price widgets are rendered
         if "calc_price_override_pc" in st.session_state:
@@ -977,7 +1056,14 @@ elif page == "calculator":
                 st.success("✅ Batch settings saved!")
         with col_b:
             st.markdown("##### Pack / Box Size")
-            pack_size = int(st.number_input("Pieces per Box/Pack", min_value=1, value=6, step=1))
+            _ps_raw    = str(sel_r.get("pack_sizes") or "1,6,12")
+            _ps_list   = [int(x.strip()) for x in _ps_raw.split(",") if x.strip().isdigit()]
+            if not _ps_list:
+                _ps_list = [1, 6, 12]
+            def _ps_lbl(n): return "Per Piece" if n == 1 else f"Box of {n}"
+            _ps_labels = [_ps_lbl(p) for p in _ps_list]
+            _ps_sel    = st.selectbox("Pack / Box Size", _ps_labels, key="calc_pack_sel")
+            pack_size  = _ps_list[_ps_labels.index(_ps_sel)]
             st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
             st.markdown(f"""
             <div style='background:#ffffff; border:1px solid #d0d8f0; border-radius:8px; padding:12px 16px; box-shadow:0 2px 8px rgba(32,76,229,0.07);'>
@@ -1198,10 +1284,14 @@ elif page == "sales":
             sel_r_name = st.selectbox("Product", recipes["name"].tolist(), key="sale_product")
             sel_r = recipes[recipes["name"] == sel_r_name].iloc[0]
         with pre2:
-            sell_mode = st.selectbox("Sell as", ["Per Piece", "Box of 6 pcs", "Box of 12 pcs"], key="sale_mode")
-
-        pack_map = {"Per Piece": 1, "Box of 6 pcs": 6, "Box of 12 pcs": 12}
-        pack = pack_map[sell_mode]
+            _r_ps_raw    = str(sel_r.get("pack_sizes") or "1,6,12")
+            _r_ps_list   = [int(x.strip()) for x in _r_ps_raw.split(",") if x.strip().isdigit()]
+            if not _r_ps_list:
+                _r_ps_list = [1, 6, 12]
+            def _sale_lbl(n): return "Per Piece" if n == 1 else f"Box of {n} pcs"
+            _sale_labels = [_sale_lbl(p) for p in _r_ps_list]
+            sell_mode    = st.selectbox("Sell as", _sale_labels, key="sale_mode")
+            pack         = _r_ps_list[_sale_labels.index(sell_mode)]
 
         with st.form("add_sale", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -1325,9 +1415,21 @@ elif page == "sales":
                             )
                         with col_del:
                             if st.button("🗑️", key=f"del_sale_{row['_id']}", help="Delete this record"):
-                                dm.delete_sale(row["_id"])
-                                st.warning("Sale deleted.")
+                                st.session_state["confirm_delete_sale"] = row["_id"]
                                 st.rerun()
+                        if st.session_state.get("confirm_delete_sale") == row["_id"]:
+                            cc1, cc2, cc3 = st.columns([4, 1, 1])
+                            with cc1:
+                                st.markdown("<span style='color:#e05555; font-size:13px;'>⚠️ Delete this record? This cannot be undone.</span>", unsafe_allow_html=True)
+                            with cc2:
+                                if st.button("Yes, delete", key=f"yes_del_{row['_id']}", type="primary"):
+                                    dm.delete_sale(row["_id"])
+                                    st.session_state.pop("confirm_delete_sale", None)
+                                    st.rerun()
+                            with cc3:
+                                if st.button("Cancel", key=f"cancel_del_{row['_id']}"):
+                                    st.session_state.pop("confirm_delete_sale", None)
+                                    st.rerun()
 
                 def summary_table(grouped_rows, period_label):
                     summary = {}
@@ -1374,3 +1476,193 @@ elif page == "sales":
 
         else:
             st.info("No sales recorded yet.")
+
+# ────────────────────────────────────────────────────────────────────
+# PAGE: EXPENSES
+# ────────────────────────────────────────────────────────────────────
+elif page == "expenses":
+    st.markdown('<div class="section-header">💸 Expenses</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Track overhead costs — packaging, gas, delivery, and more</div>', unsafe_allow_html=True)
+
+    EXPENSE_CATEGORIES = ["Packaging", "Gas / Electricity", "Delivery", "Marketing", "Equipment", "Supplies", "Other"]
+
+    with st.expander("➕ Add Expense", expanded=False):
+        with st.form("add_expense", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                exp_desc = st.text_input("Description", placeholder="e.g. Cookie boxes (50 pcs)")
+                exp_cat  = st.selectbox("Category", EXPENSE_CATEGORIES)
+            with c2:
+                exp_amt  = st.number_input("Amount (₱)", min_value=0.0, step=1.0)
+                exp_date = st.date_input("Date", value=date.today())
+            if st.form_submit_button("💾 Save Expense", use_container_width=True):
+                if exp_desc and exp_amt > 0:
+                    dm.add_expense(exp_desc, exp_cat, float(exp_amt), str(exp_date))
+                    st.success(f"✅ Expense added: {peso(exp_amt)}")
+                    st.rerun()
+                else:
+                    st.error("Please enter a description and an amount greater than 0.")
+
+    expenses = dm.get_expenses()
+
+    if not expenses.empty:
+        total_exp = float(expenses["amount"].sum())
+        cat_sum   = expenses.groupby("category")["amount"].sum().reset_index().sort_values("amount", ascending=False)
+
+        e1, e2 = st.columns(2)
+        with e1:
+            st.markdown(f'<div class="metric-card"><div class="metric-label">Total Expenses</div><div class="metric-value red">{peso(total_exp)}</div><div class="metric-sub">All time</div></div>', unsafe_allow_html=True)
+        with e2:
+            top_cat = cat_sum.iloc[0]["category"] if not cat_sum.empty else "—"
+            top_amt = cat_sum.iloc[0]["amount"]   if not cat_sum.empty else 0
+            st.markdown(f'<div class="metric-card"><div class="metric-label">Biggest Category</div><div class="metric-value white">{top_cat}</div><div class="metric-sub">{peso(top_amt)}</div></div>', unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.markdown("#### 📊 By Category")
+        cat_display = cat_sum.copy()
+        cat_display["Amount"] = cat_display["amount"].map(lambda x: peso(x))
+        cat_display["Share"]  = cat_display["amount"].map(lambda x: f"{x / total_exp * 100:.1f}%" if total_exp > 0 else "0%")
+        st.dataframe(cat_display[["category", "Amount", "Share"]].rename(columns={"category": "Category"}),
+                     use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.markdown("#### 📋 All Expenses")
+
+        exp_dates = pd.to_datetime(expenses["date"]).dt.date
+        ef1, ef2 = st.columns(2)
+        with ef1:
+            efrom = st.date_input("From", value=exp_dates.min(), key="exp_from")
+        with ef2:
+            eto   = st.date_input("To",   value=date.today(),   key="exp_to")
+
+        exp_view = expenses.copy()
+        exp_view["_date"] = pd.to_datetime(exp_view["date"]).dt.date
+        exp_view = exp_view[(exp_view["_date"] >= efrom) & (exp_view["_date"] <= eto)]
+
+        if exp_view.empty:
+            st.info("No expenses in this date range.")
+        else:
+            for _, row in exp_view.sort_values("date", ascending=False).iterrows():
+                col_info, col_del = st.columns([6, 1])
+                with col_info:
+                    st.markdown(
+                        f"<div style='background:#ffffff; border:1px solid #d0d8f0; border-radius:8px; padding:8px 14px; margin-bottom:4px;'>"
+                        f"<span style='color:#686e77; font-size:12px;'>{row['date']}</span>&nbsp;&nbsp;"
+                        f"<span style='background:#e0555512; color:#e05555; border:1px solid #e0555530; border-radius:20px; font-size:11px; font-weight:700; padding:2px 8px;'>{row['category']}</span>&nbsp;&nbsp;"
+                        f"<strong style='color:#112337;'>{row['description']}</strong>&nbsp;&nbsp;"
+                        f"<span style='color:#e05555; font-weight:700;'>{peso(row['amount'])}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                with col_del:
+                    if st.button("🗑️", key=f"del_exp_{int(row['id'])}", help="Delete expense"):
+                        st.session_state["confirm_delete_exp"] = int(row["id"])
+                        st.rerun()
+
+                if st.session_state.get("confirm_delete_exp") == int(row["id"]):
+                    dc1, dc2, dc3 = st.columns([4, 1, 1])
+                    with dc1:
+                        st.markdown("<span style='color:#e05555; font-size:13px;'>⚠️ Delete this expense? Cannot be undone.</span>", unsafe_allow_html=True)
+                    with dc2:
+                        if st.button("Yes, delete", key=f"yes_exp_{int(row['id'])}", type="primary"):
+                            dm.delete_expense(int(row["id"]))
+                            st.session_state.pop("confirm_delete_exp", None)
+                            st.rerun()
+                    with dc3:
+                        if st.button("Cancel", key=f"cancel_exp_{int(row['id'])}"):
+                            st.session_state.pop("confirm_delete_exp", None)
+                            st.rerun()
+    else:
+        st.info("No expenses recorded yet. Add your first overhead cost above.")
+
+# ────────────────────────────────────────────────────────────────────
+# PAGE: BATCH PLANNER
+# ────────────────────────────────────────────────────────────────────
+elif page == "planner":
+    st.markdown('<div class="section-header">🗓️ Batch Planner</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Plan your bake session — see if your stock can cover the planned batches</div>', unsafe_allow_html=True)
+
+    recipes = dm.get_recipes()
+    ings    = dm.get_ingredients()
+
+    if recipes.empty:
+        st.info("No recipes yet. Add some in Recipe Templates first.")
+    elif ings.empty:
+        st.info("No ingredients yet. Add some in Ingredient Costs first.")
+    else:
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            sel_name = st.selectbox("Recipe", recipes["name"].tolist())
+            sel_r    = recipes[recipes["name"] == sel_name].iloc[0]
+        with pc2:
+            num_batches = st.number_input("Number of Batches", min_value=1, max_value=50, value=1, step=1)
+
+        items = dm.get_recipe_items(int(sel_r["id"]))
+
+        if items.empty:
+            st.warning("This recipe has no ingredients configured yet.")
+        else:
+            batch_cost       = calc_recipe_cost(int(sel_r["id"]))
+            pieces_per_batch = calc_yield(
+                float(sel_r.get("dough_weight") or 0),
+                float(sel_r["portion_size"]),
+                float(sel_r["waste_pct"])
+            )
+            total_pieces = pieces_per_batch * num_batches
+            total_cost   = batch_cost * num_batches
+            cost_per_pc  = batch_cost / pieces_per_batch if pieces_per_batch > 0 else 0
+
+            sc1, sc2, sc3 = st.columns(3)
+            with sc1:
+                st.markdown(f'<div class="metric-card"><div class="metric-label">Total Pieces</div><div class="metric-value teal">{total_pieces} pcs</div><div class="metric-sub">{pieces_per_batch} pcs/batch × {num_batches}</div></div>', unsafe_allow_html=True)
+            with sc2:
+                st.markdown(f'<div class="metric-card"><div class="metric-label">Total Batch Cost</div><div class="metric-value white">{peso(total_cost)}</div><div class="metric-sub">{peso(batch_cost)} / batch</div></div>', unsafe_allow_html=True)
+            with sc3:
+                st.markdown(f'<div class="metric-card"><div class="metric-label">Cost per Piece</div><div class="metric-value gold">{peso(cost_per_pc)}</div><div class="metric-sub">Ingredient cost only</div></div>', unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.markdown("#### 🧂 Ingredient Requirements vs Stock")
+
+            plan_rows  = []
+            has_short  = False
+            shop_items = []
+
+            for _, item in items.iterrows():
+                ing = ings[ings["id"] == item["ingredient_id"]]
+                if ing.empty:
+                    continue
+                ing     = ing.iloc[0]
+                needed  = float(item["qty"]) * num_batches
+                on_hand = float(ing["stock"])
+                short   = max(0.0, needed - on_hand)
+                status  = "⚠️ SHORT" if short > 0 else "✅ OK"
+                if short > 0:
+                    has_short = True
+                    shop_items.append({"Ingredient": ing["name"], "Buy": f"{short:.1f} {ing['unit']}"})
+                plan_rows.append({
+                    "Ingredient":     ing["name"],
+                    "Per Batch":      f"{item['qty']:.1f} {ing['unit']}",
+                    "Total Needed":   f"{needed:.1f} {ing['unit']}",
+                    "On Hand":        f"{on_hand:.1f} {ing['unit']}",
+                    "Short By":       f"{short:.1f} {ing['unit']}" if short > 0 else "—",
+                    "Status":         status,
+                })
+
+            if plan_rows:
+                st.dataframe(pd.DataFrame(plan_rows), use_container_width=True, hide_index=True)
+
+            if has_short:
+                st.markdown('<div class="alert-low">⚠️ Stock is insufficient for this plan. Shopping list below.</div>', unsafe_allow_html=True)
+                st.markdown("#### 🛒 Shopping List for This Plan")
+                for s in shop_items:
+                    st.markdown(
+                        f"<div style='background:#ffffff; border:1px solid #d0d8f0; border-radius:8px; "
+                        f"padding:10px 16px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;'>"
+                        f"<span style='font-weight:700; color:#112337;'>{s['Ingredient']}</span>"
+                        f"<span style='background:#e0555512; color:#e05555; border:1px solid #e0555530; "
+                        f"border-radius:20px; font-size:12px; font-weight:700; padding:4px 12px;'>Buy: {s['Buy']}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.markdown('<div class="alert-ok">✅ You have enough stock for all planned batches!</div>', unsafe_allow_html=True)

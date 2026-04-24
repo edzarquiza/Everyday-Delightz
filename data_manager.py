@@ -31,7 +31,7 @@ SHEETS = {
         "dtypes": {"id": int, "recipe_id": int, "ingredient_id": int, "qty": float}
     },
     "sales": {
-        "columns": ["id", "recipe_id", "qty", "price_per_pc", "date", "pack_size"],
+        "columns": ["id", "recipe_id", "qty", "price_per_pc", "date", "pack_size", "customer"],
         "dtypes": {"id": int, "recipe_id": int, "qty": int, "price_per_pc": float, "pack_size": int}
     },
     "expenses": {
@@ -282,17 +282,21 @@ class DataManager:
         if not df.empty:
             if "pack_size" not in df.columns:
                 df["pack_size"] = 1
+            if "customer" not in df.columns:
+                df["customer"] = ""
             for col, dtype in SHEETS["sales"]["dtypes"].items():
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(dtype)
+            df["customer"] = df["customer"].fillna("").astype(str)
         return df
 
-    def add_sale(self, recipe_id, qty, price_per_pc, sale_date, pack_size=1):
+    def add_sale(self, recipe_id, qty, price_per_pc, sale_date, pack_size=1, customer=""):
         df = self.get_sales()
         new_row = {
             "id": self._next_id(df), "recipe_id": int(recipe_id),
             "qty": int(qty), "price_per_pc": float(price_per_pc),
             "date": str(sale_date), "pack_size": int(pack_size),
+            "customer": str(customer).strip(),
         }
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         self._write_sheet("sales", df)

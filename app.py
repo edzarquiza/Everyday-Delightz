@@ -1302,6 +1302,7 @@ elif page == "sales":
             with c1:
                 qty_label = "Quantity (pieces)" if pack == 1 else f"Quantity (boxes of {pack})"
                 qty_input = st.number_input(qty_label, min_value=1, step=1, value=1)
+                customer_input = st.text_input("Sold To", placeholder="e.g. Tita Cora, Walk-in, Online Order")
             with c2:
                 price_label = "Price per Piece (₱)" if pack == 1 else f"Price per Box of {pack} (₱)"
                 default_price = round(float(sel_r["default_price"]) * pack, 2)
@@ -1313,7 +1314,7 @@ elif page == "sales":
             if st.form_submit_button("✅ Record Sale", use_container_width=True):
                 total_pieces = qty_input * pack
                 price_per_pc = price_input / pack if pack > 1 else float(price_input)
-                dm.add_sale(int(sel_r["id"]), total_pieces, price_per_pc, str(sale_date), pack)
+                dm.add_sale(int(sel_r["id"]), total_pieces, price_per_pc, str(sale_date), pack, customer=customer_input)
                 if deduct:
                     items = dm.get_recipe_items(int(sel_r["id"]))
                     pcs_per_batch = calc_yield(
@@ -1376,7 +1377,8 @@ elif page == "sales":
                 else:
                     qty_str = f"{total_qty} pcs"
                 rows.append({
-                    "Date": str(s["date"]), "Product": r["name"], "Qty": qty_str,
+                    "Date": str(s["date"]), "Customer": str(s.get("customer") or "—"),
+                    "Product": r["name"], "Qty": qty_str,
                     "Price/pc": peso(s["price_per_pc"]), "Revenue": peso(rev),
                     "Cost": peso(cost), "Profit": peso(profit),
                     "_id": int(s["id"]), "_rev": rev, "_cost": cost, "_profit": profit,
@@ -1390,7 +1392,7 @@ elif page == "sales":
 
                 with tab_rec:
                     sales_df = pd.DataFrame(rows)
-                    display_cols = ["Date", "Product", "Qty", "Price/pc", "Revenue", "Cost", "Profit"]
+                    display_cols = ["Date", "Customer", "Product", "Qty", "Price/pc", "Revenue", "Cost", "Profit"]
                     st.dataframe(sales_df[display_cols], use_container_width=True, hide_index=True)
 
                     csv_data = sales_df[display_cols].to_csv(index=False).encode("utf-8")
@@ -1407,6 +1409,7 @@ elif page == "sales":
                         profit_color = "#3aad2e" if row["_profit"] >= 0 else "#e05555"
                         col_info, col_del = st.columns([6, 1])
                         with col_info:
+                            _cust_tag = f"&nbsp;&nbsp;<span style='color:#686e77; font-size:12px;'>· {row['Customer']}</span>" if row['Customer'] != '—' else ""
                             st.markdown(
                                 f"<div style='background:#ffffff; border:1px solid #d0d8f0; border-radius:8px; padding:8px 14px; margin-bottom:4px;'>"
                                 f"<span style='color:#686e77; font-size:12px;'>{row['Date']}</span>&nbsp;&nbsp;"
@@ -1414,7 +1417,7 @@ elif page == "sales":
                                 f"<span style='color:#686e77;'>{row['Qty']}</span>&nbsp;&nbsp;"
                                 f"<span style='color:#204ce5;'>{row['Revenue']}</span>&nbsp;&nbsp;"
                                 f"<span style='color:{profit_color};'>Profit: {row['Profit']}</span>"
-                                f"</div>",
+                                f"{_cust_tag}</div>",
                                 unsafe_allow_html=True
                             )
                         with col_del:

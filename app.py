@@ -837,7 +837,7 @@ elif page == "recipes":
                 with c2:
                     default_price = st.number_input("Default Selling Price (₱/pc)", min_value=0.0, value=35.0)
                     target_margin = st.number_input("Target Profit Margin (%)", min_value=0.0, max_value=100.0, value=60.0)
-                    pack_sizes_input = st.text_input("Pack Sizes (comma-separated)", value="1,6,12",
+                    pack_sizes_input = st.text_input("Pack Sizes (comma-separated)", value="1,5,10",
                         help="e.g. '1,5,10' → sell per piece, box of 5, or box of 10")
 
                 st.markdown("**Ingredients:**")
@@ -914,7 +914,7 @@ elif page == "recipes":
                     if st.button(f"📋 Duplicate", key=f"dup_{r['id']}"):
                         items = dm.get_recipe_items(r["id"])
                         ing_list = [{"ingredient_id": int(i["ingredient_id"]), "qty": float(i["qty"])} for _, i in items.iterrows()]
-                        dm.add_recipe(r["name"] + " (Copy)", float(r["portion_size"]), float(r["waste_pct"]), float(r["default_price"]), float(r["target_margin_pct"]), float(r.get("dough_weight") or 0), ing_list, pack_sizes=str(r.get("pack_sizes") or "1,6,12"))
+                        dm.add_recipe(r["name"] + " (Copy)", float(r["portion_size"]), float(r["waste_pct"]), float(r["default_price"]), float(r["target_margin_pct"]), float(r.get("dough_weight") or 0), ing_list, pack_sizes=str(r.get("pack_sizes") or "1,5,10"))
                         st.success("Duplicated!")
                         st.rerun()
                 with cx:
@@ -946,7 +946,7 @@ elif page == "recipes":
                         with ec2:
                             e_price = st.number_input("Default Selling Price (₱/pc)", min_value=0.0, value=float(r["default_price"]), key=f"epr_{r['id']}")
                             e_margin = st.number_input("Target Profit Margin (%)", min_value=0.0, max_value=100.0, value=float(r["target_margin_pct"]), key=f"em_{r['id']}")
-                            e_pack_sizes = st.text_input("Pack Sizes", value=str(r.get("pack_sizes") or "1,6,12"),
+                            e_pack_sizes = st.text_input("Pack Sizes", value=str(r.get("pack_sizes") or "1,5,10"),
                                 help="e.g. '1,5,10' → per piece, box of 5, box of 10", key=f"eps_{r['id']}")
 
                         st.markdown("**Ingredients:**")
@@ -1056,7 +1056,7 @@ elif page == "calculator":
                 st.success("✅ Batch settings saved!")
         with col_b:
             st.markdown("##### Pack / Box Size")
-            _ps_raw    = str(sel_r.get("pack_sizes") or "1,6,12")
+            _ps_raw    = str(sel_r.get("pack_sizes") or "1,5,10")
             _ps_list   = [int(x.strip()) for x in _ps_raw.split(",") if x.strip().isdigit()]
             if not _ps_list:
                 _ps_list = [1, 6, 12]
@@ -1284,7 +1284,7 @@ elif page == "sales":
             sel_r_name = st.selectbox("Product", recipes["name"].tolist(), key="sale_product")
             sel_r = recipes[recipes["name"] == sel_r_name].iloc[0]
         with pre2:
-            _r_ps_raw    = str(sel_r.get("pack_sizes") or "1,6,12")
+            _r_ps_raw    = str(sel_r.get("pack_sizes") or "1,5,10")
             _r_ps_list   = [int(x.strip()) for x in _r_ps_raw.split(",") if x.strip().isdigit()]
             if not _r_ps_list:
                 _r_ps_list = [1, 6, 12]

@@ -12,7 +12,7 @@ DB_FILE = "everyday_delightz_data.xlsx"
 
 # Default values injected when migrating existing sheets that are missing a column
 SHEET_DEFAULTS = {
-    "pack_sizes": "1,6,12",
+    "pack_sizes": "1,5,10",
 }
 
 SHEETS = {
@@ -58,8 +58,8 @@ SAMPLE_DATA = {
     ], columns=SHEETS["ingredients"]["columns"]),
 
     "recipes": pd.DataFrame([
-        [1, "Choco Chip Cookies", 40, 5, 35, 60, 927, "1,6,12"],
-        [2, "Brownies",           60, 3, 45, 55, 780, "1,6,12"],
+        [1, "Choco Chip Cookies", 40, 5, 35, 60, 927, "1,5,10"],
+        [2, "Brownies",           60, 3, 45, 55, 780, "1,5,10"],
     ], columns=SHEETS["recipes"]["columns"]),
 
     "recipe_items": pd.DataFrame([
@@ -195,14 +195,14 @@ class DataManager:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(dtype)
             if "pack_sizes" not in df.columns:
-                df["pack_sizes"] = "1,6,12"
+                df["pack_sizes"] = "1,5,10"
             else:
-                df["pack_sizes"] = df["pack_sizes"].fillna("1,6,12").astype(str)
+                df["pack_sizes"] = df["pack_sizes"].fillna("1,5,10").astype(str)
         return df
 
     def add_recipe(self, name, portion_size, waste_pct, default_price,
                    target_margin_pct, dough_weight, ingredients: list,
-                   pack_sizes: str = "1,6,12"):
+                   pack_sizes: str = "1,5,10"):
         df = self.get_recipes()
         new_id = self._next_id(df)
         new_row = {

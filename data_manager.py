@@ -72,8 +72,8 @@ SAMPLE_DATA = {
     ], columns=SHEETS["recipe_items"]["columns"]),
 
     "sales": pd.DataFrame([
-        [1, 1, 24, 35, str(date.today()), 6],
-        [2, 2, 12, 45, str(date.today()), 12],
+        [1, 1, 24, 35, str(date.today()), 6,  ""],
+        [2, 2, 12, 45, str(date.today()), 12, ""],
     ], columns=SHEETS["sales"]["columns"]),
 
     "expenses": pd.DataFrame(columns=SHEETS["expenses"]["columns"]),
